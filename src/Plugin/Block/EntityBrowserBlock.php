@@ -99,22 +99,8 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    * Adds body and description fields to the block configuration form.
    */
   public function blockForm($form, FormStateInterface $form_state) {
-    if (!$form_state->has('default_entities')) {
-      $storages = [];
-      $entities = [];
-      $view_mode_map = [];
-
-      foreach ($this->configuration['entities'] as $id) {
-        list($entity_type_id, $entity_id, $view_mode) = explode(':', $id);
-        if (!isset($storages[$entity_type_id])) {
-          $storages[$entity_type_id] = $this->entityTypeManager->getStorage($entity_type_id);
-        }
-        $view_mode_map[$entity_type_id . ':' . $entity_id] = $view_mode;
-        $entities[] = $storages[$entity_type_id]->load($entity_id);
-      }
-
-      $form_state->set('view_mode_map', $view_mode_map);
-      $form_state->set('entities', $entities);
+    if (!$form_state->has('first_load')) {
+      $form_state->set('first_load', TRUE);
     }
 
     $form['selection'] = [
@@ -125,7 +111,6 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
     $form['selection']['entity_browser'] = [
       '#type' => 'entity_browser',
       '#entity_browser' => $this->getDerivativeId(),
-      '#default_value' => $form_state->get('entities'),
       '#process' => [
         [
           '\Drupal\entity_browser\Element\EntityBrowserElement',
@@ -156,6 +141,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
       '#process' => [
         [self::class, 'processTable']
       ],
+      '#block_configuration' => $this->configuration,
     ];
 
     return $form;
@@ -165,19 +151,35 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    * Render API callback: Processes the table element.
    */
   public static function processTable(&$element, FormStateInterface $form_state, &$complete_form) {
-    $entities = $form_state->getValue([
-      'settings',
-      'selection',
-      'entity_browser',
-      'entities'
-    ], $form_state->get('entities'));
-    $view_mode_map = $form_state->get('view_mode_map');
+    $parents = array_slice($element['#array_parents'], 0, 2);
+    if ($form_state->get('first_load')) {
+      $entities = self::loadEntitiesByIDs($element['#block_configuration']['entities']);
+      $form_state->set('first_load', FALSE);
+    }
+    else {
+      $selection = $form_state->getValue(array_merge($parents, ['table']), []);
+      $entities = self::loadEntitiesByIDs(array_keys($selection));
+    }
+
+    $eb_entities = $form_state->getValue(array_merge($parents, ['entity_browser', 'entities']), []);
+    foreach ($eb_entities as $entity) {
+      $id = $entity->getEntityTypeId() . ':' . $entity->id();
+      if (!isset($entities[$id])) {
+        $entities[$id] = $entity;
+      }
+    }
+
+    $view_mode_map = [];
+    foreach ($element['#block_configuration']['entities'] as $id) {
+      list($entity_type_id, $entity_id, $view_mode) = explode(':', $id);
+      $view_mode_map[$entity_type_id . ':' . $entity_id] = $view_mode;
+    }
+
     $display_repository = \Drupal::service('entity_display.repository');
 
     $delta = 0;
 
-    foreach ($entities as $entity) {
-      $id = $entity->getEntityTypeId() . ':' . $entity->id();
+    foreach ($entities as $id => $entity) {
       $element[$id] = [
         '#attributes' => [
           'class' => ['draggable'],
@@ -205,6 +207,19 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
       $delta++;
     }
     return $element;
+  }
+
+  public static function loadEntitiesByIDs($ids) {
+    $storages = [];
+    $entities = [];
+    foreach ($ids as $id) {
+      list($entity_type_id, $entity_id) = explode(':', $id);
+      if (!isset($storages[$entity_type_id])) {
+        $storages[$entity_type_id] = \Drupal::entityTypeManager()->getStorage($entity_type_id);
+      }
+      $entities[$entity_type_id . ':' . $entity_id] = $storages[$entity_type_id]->load($entity_id);
+    }
+    return $entities;
   }
 
   /**
