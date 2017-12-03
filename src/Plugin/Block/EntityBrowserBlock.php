@@ -126,8 +126,8 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
       '#type' => 'table',
       '#header' => [
         $this->t('Title'),
-        $this->t('Type'),
         $this->t('View mode'),
+        $this->t('Operations'),
         $this->t('Order', [], ['context' => 'Sort order']),
       ],
       '#empty' => $this->t('No entities yet'),
@@ -151,7 +151,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    * Render API callback: Processes the table element.
    */
   public static function processTable(&$element, FormStateInterface $form_state, &$complete_form) {
-    $parents = array_slice($element['#array_parents'], 0, 2);
+    $parents = array_slice($element['#array_parents'], -3, 2);
     if ($form_state->get('first_load')) {
       $entities = self::loadEntitiesByIDs($element['#block_configuration']['entities']);
       $form_state->set('first_load', FALSE);
@@ -186,10 +186,21 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
           'data-entity-id' => $id,
         ],
         'title' => ['#markup' => $entity->label()],
-        'type' => ['#markup' => $entity->getEntityType()->getLabel()],
         'view_mode' => [
           '#type' => 'select',
           '#options' => $display_repository->getViewModeOptions($entity->getEntityTypeId()),
+        ],
+        'operations' => [
+          'remove' => [
+            '#type' => 'button',
+            '#value' => t('Remove'),
+            '#op' => 'remove',
+            '#name' => 'remove_' . $id,
+            '#ajax' => [
+              'callback' => [self::class, 'updateCallback'],
+              'wrapper' => 'entity-browser-block-form',
+            ],
+          ],
         ],
         '_weight' => [
           '#type' => 'weight',
@@ -209,6 +220,15 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
     return $element;
   }
 
+  /**
+   * Loads entities based on an ID in the format entity_type:entity_id.
+   *
+   * @param array $ids
+   *   An array of IDs.
+   *
+   * @return \Drupal\Core\Entity\EntityInterface[]
+   *   An array of loaded entities, keyed by an ID.
+   */
   public static function loadEntitiesByIDs($ids) {
     $storages = [];
     $entities = [];
@@ -227,8 +247,18 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    */
   public static function updateCallback(array &$form, FormStateInterface $form_state) {
     $trigger = $form_state->getTriggeringElement();
-    $parents = array_slice($trigger['#array_parents'], 0, -2);
-    $selection = NestedArray::getValue($form, $parents);
+    if ($trigger['#op'] === 'remove') {
+      $parents = array_slice($trigger['#array_parents'], 0, -4);
+      $selection = NestedArray::getValue($form, $parents);
+      $id = str_replace('remove_', '', $trigger['#name']);
+      unset($selection['table'][$id]);
+      $value = explode(' ', $selection['entity_browser']['entity_ids']['#value']);
+      $selection['entity_browser']['entity_ids']['#value'] = array_diff($value, [$id]);
+    }
+    else {
+      $parents = array_slice($trigger['#array_parents'], 0, -2);
+      $selection = NestedArray::getValue($form, $parents);
+    }
     return $selection;
   }
 
@@ -237,7 +267,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    */
   public static function processEntityBrowser(&$element, FormStateInterface $form_state, &$complete_form) {
     $element['entity_ids']['#ajax'] = [
-      'callback' => [get_called_class(), 'updateCallback'],
+      'callback' => [self::class, 'updateCallback'],
       'wrapper' => 'entity-browser-block-form',
       'event' => 'entity_browser_value_updated',
     ];
