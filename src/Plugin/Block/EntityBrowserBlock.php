@@ -89,7 +89,8 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    */
   public function defaultConfiguration() {
     return [
-      'entities' => [],
+      'entity_ids' => [],
+      'view_modes' => [],
     ];
   }
 
@@ -99,10 +100,6 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    * Adds body and description fields to the block configuration form.
    */
   public function blockForm($form, FormStateInterface $form_state) {
-    if (!$form_state->has('first_load')) {
-      $form_state->set('first_load', TRUE);
-    }
-
     $form['selection'] = [
       '#type' => 'container',
       '#attributes' => ['id' => 'entity-browser-block-form'],
@@ -118,6 +115,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
         ],
         [self::class, 'processEntityBrowser'],
       ],
+      '#default_value' => self::loadEntitiesByIDs($this->configuration['entity_ids']),
     ];
 
     $order_class = 'entity-browser-block-delta-order';
@@ -141,7 +139,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
       '#process' => [
         [self::class, 'processTable']
       ],
-      '#block_configuration' => $this->configuration,
+      '#default_view_modes' => $this->configuration['view_modes'],
     ];
 
     return $form;
@@ -152,27 +150,12 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    */
   public static function processTable(&$element, FormStateInterface $form_state, &$complete_form) {
     $parents = array_slice($element['#array_parents'], -3, 2);
-    if ($form_state->get('first_load')) {
-      $entities = self::loadEntitiesByIDs($element['#block_configuration']['entities']);
-      $form_state->set('first_load', FALSE);
+    $entity_ids = $form_state->getValue(array_merge($parents, ['entity_browser', 'entity_ids']), '');
+    if (!empty($entity_ids)) {
+      $entities = self::loadEntitiesByIDs(explode(' ', $entity_ids));
     }
     else {
-      $selection = $form_state->getValue(array_merge($parents, ['table']), []);
-      $entities = self::loadEntitiesByIDs(array_keys($selection));
-    }
-
-    $eb_entities = $form_state->getValue(array_merge($parents, ['entity_browser', 'entities']), []);
-    foreach ($eb_entities as $entity) {
-      $id = $entity->getEntityTypeId() . ':' . $entity->id();
-      if (!isset($entities[$id])) {
-        $entities[$id] = $entity;
-      }
-    }
-
-    $view_mode_map = [];
-    foreach ($element['#block_configuration']['entities'] as $id) {
-      list($entity_type_id, $entity_id, $view_mode) = explode(':', $id);
-      $view_mode_map[$entity_type_id . ':' . $entity_id] = $view_mode;
+      $entities = [];
     }
 
     $display_repository = \Drupal::service('entity_display.repository');
@@ -211,8 +194,8 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
           '#attributes' => ['class' => ['entity-browser-block-delta-order']],
         ],
       ];
-      if (isset($view_mode_map[$id])) {
-        $element[$id]['view_mode']['#default_value'] = $view_mode_map[$id];
+      if (isset($element['#default_view_modes'][$id])) {
+        $element[$id]['view_mode']['#default_value'] = $element['#default_view_modes'][$id];
       }
 
       $delta++;
@@ -271,6 +254,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
       'wrapper' => 'entity-browser-block-form',
       'event' => 'entity_browser_value_updated',
     ];
+    $element['entity_ids']['#default_value'] = implode(' ', array_keys($element['#default_value']));
     return $element;
   }
 
@@ -282,11 +266,14 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
     uasort($selection, function ($a, $b) {
       return SortArray::sortByKeyInt($a, $b, '_weight');
     });
-    $entities = [];
+    $entity_ids = [];
+    $view_modes = [];
     foreach ($selection as $id => $values) {
-      $entities[] = $id . ':' . $values['view_mode'];
+      $entity_ids[] = $id;
+      $view_modes[$id] = $values['view_mode'];
     }
-    $this->configuration['entities'] = $entities;
+    $this->configuration['entity_ids'] = $entity_ids;
+    $this->configuration['view_modes'] = $view_modes;
   }
 
   /**
@@ -294,17 +281,15 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
    */
   public function build() {
     $build = [];
-    $entity_helpers = [];
+    $view_builders = [];
 
-    foreach ($this->configuration['entities'] as $id) {
-      list($entity_type_id, $entity_id, $view_mode) = explode(':', $id);
-      if (!isset($entity_helpers[$entity_type_id])) {
-        $entity_helpers[$entity_type_id] = [
-          'storage' => $this->entityTypeManager->getStorage($entity_type_id),
-          'view_builder' => $this->entityTypeManager->getViewBuilder($entity_type_id),
-        ];
+    $entities = self::loadEntitiesByIDs($this->configuration['entity_ids']);
+
+    foreach ($entities as $id => $entity) {
+      $entity_type_id = $entity->getEntityTypeId();
+      if (!isset($view_builders[$id])) {
+        $view_builders[$id] = $this->entityTypeManager->getViewBuilder($entity_type_id);
       }
-      $entity = $entity_helpers[$entity_type_id]['storage']->load($entity_id);
       if ($entity && $entity->access('view')) {
         if (isset(static::$recursiveRenderDepth[$id])) {
           static::$recursiveRenderDepth[$id]++;
@@ -313,12 +298,11 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
           static::$recursiveRenderDepth[$id] = 1;
         }
 
-        // Protect ourselves from recursive rendering.
         if (static::$recursiveRenderDepth[$id] > static::RECURSIVE_RENDER_LIMIT) {
           return $build;
         }
 
-        $build[] = $entity_helpers[$entity_type_id]['view_builder']->view($entity, $view_mode);
+        $build[] = $view_builders[$id]->view($entity, $this->configuration['view_modes'][$id]);
       }
     }
 
