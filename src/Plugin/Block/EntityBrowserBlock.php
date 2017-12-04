@@ -151,12 +151,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
   public static function processTable(&$element, FormStateInterface $form_state, &$complete_form) {
     $parents = array_slice($element['#array_parents'], -3, 2);
     $entity_ids = $form_state->getValue(array_merge($parents, ['entity_browser', 'entity_ids']), '');
-    if (!empty($entity_ids)) {
-      $entities = self::loadEntitiesByIDs(explode(' ', $entity_ids));
-    }
-    else {
-      $entities = [];
-    }
+    $entities = empty($entity_ids) ? [] : self::loadEntitiesByIDs(explode(' ', $entity_ids));
 
     $display_repository = \Drupal::service('entity_display.repository');
 
