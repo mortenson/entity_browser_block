@@ -111,7 +111,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
       '#process' => [
         [
           '\Drupal\entity_browser\Element\EntityBrowserElement',
-          'processEntityBrowser'
+          'processEntityBrowser',
         ],
         [self::class, 'processEntityBrowser'],
       ],
@@ -137,7 +137,7 @@ class EntityBrowserBlock extends BlockBase implements ContainerFactoryPluginInte
         ],
       ],
       '#process' => [
-        [self::class, 'processTable']
+        [self::class, 'processTable'],
       ],
       '#default_view_modes' => $this->configuration['view_modes'],
     ];
